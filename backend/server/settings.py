@@ -145,14 +145,73 @@ STORAGES = {
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+RAILWAY_PUBLIC_DOMAIN = os.getenv('RAILWAY_PUBLIC_DOMAIN', '')
+
 if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
     CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS', 'http://127.0.0.1:5173,http://localhost:5173')
 else:
-    CORS_ALLOW_ALL_ORIGINS = False
-    CORS_ALLOWED_ORIGINS = env_list('DJANGO_CORS_ALLOWED_ORIGINS')
-    CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS')
+    # Fall back to a sensible default when DJANGO_CORS_ALLOWED_ORIGINS is not
+    # configured (e.g. on a fresh Railway deploy) so the CORS middleware
+    # never fails to initialize and take down every request with a 500.
+    _default_cors_origins = f'https://{RAILWAY_PUBLIC_DOMAIN}' if RAILWAY_PUBLIC_DOMAIN else ''
+    _cors_allowed_origins = env_list('DJANGO_CORS_ALLOWED_ORIGINS', _default_cors_origins)
+
+    if _cors_allowed_origins:
+        CORS_ALLOW_ALL_ORIGINS = False
+        CORS_ALLOWED_ORIGINS = _cors_allowed_origins
+    else:
+        # No explicit origins configured anywhere - allow all rather than
+        # crashing the app or silently blocking every cross-origin request.
+        CORS_ALLOW_ALL_ORIGINS = True
+
+    _default_csrf_origins = f'https://{RAILWAY_PUBLIC_DOMAIN}' if RAILWAY_PUBLIC_DOMAIN else ''
+    CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS', _default_csrf_origins)
 
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
+
+
+# Logging
+# https://docs.djangoproject.com/en/6.0/topics/logging/
+# Ensures exceptions are actually surfaced (e.g. in Railway deploy logs)
+# instead of failing silently.
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '[{asctime}] {levelname} {name}: {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        'planner': {
+            'handlers': ['console'],
+            'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+    },
+}
