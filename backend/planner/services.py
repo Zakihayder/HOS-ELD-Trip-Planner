@@ -19,7 +19,7 @@ ASSUMED_PICKUP_HOURS = 1.0
 ASSUMED_DROPOFF_HOURS = 1.0
 ASSUMED_FUEL_STOP_HOURS = 0.5
 ASSUMED_FUEL_EVERY_MILES = 1000.0
-DEFAULT_CARRIER_NAME = "Assessment Carrier LLC"
+DEFAULT_CARRIER_NAME = "Summit Freight Carriers LLC"
 DEFAULT_CARRIER_OFFICE = "Nashville, TN"
 DEFAULT_VEHICLE_NUMBERS = "TRK-100 / TRL-200"
 DEFAULT_DRIVER_SIGNATURE = "Driver Signature"
@@ -102,7 +102,7 @@ def geocode_place(query: str) -> GeoPoint:
         response = requests.get(
             url,
             params={"q": query, "format": "json", "limit": 1, "accept-language": "en"},
-            headers={"User-Agent": "hos-planner-assessment-app/1.0", "Accept-Language": "en"},
+            headers={"User-Agent": "hos-eld-trip-planner/1.0", "Accept-Language": "en"},
             timeout=20,
         )
         response.raise_for_status()
@@ -134,7 +134,7 @@ def geocode_suggestions(query: str, limit: int = 5) -> list[GeoPoint]:
         response = requests.get(
             url,
             params={"q": query, "format": "json", "limit": limit, "accept-language": "en"},
-            headers={"User-Agent": "hos-planner-assessment-app/1.0", "Accept-Language": "en"},
+            headers={"User-Agent": "hos-eld-trip-planner/1.0", "Accept-Language": "en"},
             timeout=20,
         )
         response.raise_for_status()
@@ -165,7 +165,7 @@ def reverse_geocode(lat: float, lon: float) -> GeoPoint:
         response = requests.get(
             url,
             params={"lat": lat, "lon": lon, "format": "jsonv2", "accept-language": "en"},
-            headers={"User-Agent": "hos-planner-assessment-app/1.0", "Accept-Language": "en"},
+            headers={"User-Agent": "hos-eld-trip-planner/1.0", "Accept-Language": "en"},
             timeout=20,
         )
         response.raise_for_status()
@@ -177,6 +177,78 @@ def reverse_geocode(lat: float, lon: float) -> GeoPoint:
         pass
 
     return GeoPoint(lat=lat, lon=lon, label=f"Lat {lat:.5f}, Lon {lon:.5f}")
+
+
+_MODIFIER_TEXT = {
+    "uturn": "make a U-turn",
+    "sharp right": "turn sharp right",
+    "right": "turn right",
+    "slight right": "bear right",
+    "straight": "continue straight",
+    "slight left": "bear left",
+    "left": "turn left",
+    "sharp left": "turn sharp left",
+}
+
+_SIMPLE_DIRECTION = {
+    "uturn": "straight",
+    "sharp right": "right",
+    "right": "right",
+    "slight right": "right",
+    "straight": "straight",
+    "slight left": "left",
+    "left": "left",
+    "sharp left": "left",
+}
+
+
+def humanize_step(maneuver: dict[str, Any], road_name: str) -> str:
+    """Build a human-readable driving instruction from an OSRM maneuver."""
+    maneuver_type = maneuver.get("type", "continue")
+    modifier = maneuver.get("modifier")
+    modifier_text = _MODIFIER_TEXT.get(modifier, "continue")
+    name_suffix = f" onto {road_name}" if road_name else ""
+    on_suffix = f" on {road_name}" if road_name else ""
+
+    if maneuver_type == "depart":
+        return f"Head out{on_suffix}" if road_name else "Head out"
+    if maneuver_type == "arrive":
+        return "Arrive at destination"
+    if maneuver_type == "turn":
+        return f"{modifier_text.capitalize()}{name_suffix}"
+    if maneuver_type == "new name":
+        return f"Continue{on_suffix}" if road_name else "Continue straight ahead"
+    if maneuver_type == "merge":
+        return f"Merge{name_suffix}"
+    if maneuver_type == "on ramp":
+        return f"Take the ramp{name_suffix}"
+    if maneuver_type == "off ramp":
+        return f"Take the exit{name_suffix}"
+    if maneuver_type == "fork":
+        direction = _SIMPLE_DIRECTION.get(modifier)
+        return f"Keep {direction}{name_suffix}" if direction else f"Continue at the fork{name_suffix}"
+    if maneuver_type == "end of road":
+        return f"{modifier_text.capitalize()} at the end of the road{name_suffix}"
+    if maneuver_type in ("roundabout", "rotary", "roundabout turn"):
+        exit_number = maneuver.get("exit")
+        exit_text = f"take the {exit_number}{_ordinal_suffix(exit_number)} exit" if exit_number else "take the exit"
+        return f"At the roundabout, {exit_text}{name_suffix}"
+    if maneuver_type in ("exit roundabout", "exit rotary"):
+        return f"Exit the roundabout{name_suffix}"
+    if maneuver_type == "continue":
+        return f"Continue{on_suffix}" if road_name else "Continue straight ahead"
+    if maneuver_type == "use lane":
+        return f"Continue{on_suffix}" if road_name else "Continue straight ahead"
+    if maneuver_type == "notification":
+        return f"Continue{on_suffix}" if road_name else "Continue straight ahead"
+
+    return f"Continue{name_suffix}" if road_name else "Continue"
+
+
+def _ordinal_suffix(number: int) -> str:
+    if 10 <= number % 100 <= 20:
+        return "th"
+    return {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
 
 
 def build_route(points: list[GeoPoint]) -> dict[str, Any]:
@@ -199,9 +271,10 @@ def build_route(points: list[GeoPoint]) -> dict[str, Any]:
             for leg in legs:
                 for step in leg.get("steps", []):
                     maneuver = step.get("maneuver", {})
+                    road_name = (step.get("name") or "").strip()
                     steps.append(
                         {
-                            "instruction": maneuver.get("instruction") or maneuver.get("type", "Continue"),
+                            "instruction": humanize_step(maneuver, road_name),
                             "distance_miles": meters_to_miles(step.get("distance", 0.0)),
                             "duration_minutes": round(step.get("duration", 0.0) / 60.0, 1),
                         }
