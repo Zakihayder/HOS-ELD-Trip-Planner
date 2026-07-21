@@ -134,9 +134,18 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
+#
+# This project is a REST API and does not serve any static assets in
+# production. WhiteNoise emits a "No directory at: ..." UserWarning on
+# startup if STATIC_ROOT doesn't exist yet (e.g. `collectstatic` has never
+# been run). Since we don't rely on that warning to catch a real
+# misconfiguration here, we simply ensure the directory exists so it never
+# fires, without changing runtime behavior for either DEBUG or production.
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATIC_ROOT.mkdir(parents=True, exist_ok=True)
+
 STORAGES = {
     'staticfiles': {
         'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
